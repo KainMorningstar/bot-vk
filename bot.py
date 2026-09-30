@@ -154,7 +154,8 @@ def format_schedule(day_data, date_str, date_key, day_name):
     return "\n".join(lines)
 
 def get_tomorrow_schedule():
-    tomorrow = datetime.now() + timedelta(days=1)
+    moscow_now = datetime.utchnow() + timedelta(hours=3)
+    tomorrow = moscow_now + timedelta(days=1)
     date_key = tomorrow.strftime("%Y-%m-%d")
     date_display = tomorrow.strftime("%d.%m.%Y")
     day_index = tomorrow.weekday()
