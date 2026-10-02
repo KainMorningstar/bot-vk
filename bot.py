@@ -20,11 +20,12 @@ TEACHERS = {
     "физика": "Чеусова Лолита, дочь Александра",
     "химия": "Финагеева Мария, дочь Олега",
     "латинский язык": "Выстропова Ольга, дочь Станислава",
-    "английский": "Анкин Даниил, сын Юрия"
+    "английский": "Анкин Даниил, сын Юрия",
+    "философия": "Пашарина Екатерина, дочь Сергея"
 }
 
 LINKS = {
-    "история россии": "https://telemost.yandex.ru/j/2560443856",
+    "история": "https://telemost.yandex.ru/j/2560443856",
     "психология": "https://telemost.yandex.ru/j/93311157027821",
     "орг": "https://telemost.yandex.ru/j/5504789628",
     "философия": "https://telemost.yandex.ru/j/82394246600604",
@@ -175,6 +176,17 @@ def get_links(request):
         lines.append(f"• {subj.capitalize()}: {link}")
     return "\n".join(lines)
 
+def get_commands():
+    text = "Вот что я умею:\n\n"
+    text += "• привет / начать / start — поздороваться\n"
+    text += "• преподы — список преподавателей\n"
+    text += "• ссылки — все ссылки на дистанционные предметы\n"
+    text += "• ссылки [предмет] — ссылка на конкретный предмет\n"
+    text += "• расписание / завтра — расписание на завтра\n"
+    text += "• команды — этот список\n\n"
+    text += "Учить команды по атласу — путь в никуда. Учить команды по списку — единственное, что отделяет тебя от уровня среднего специального образования."
+    return text
+
 print("Бот запущен и слушает сообщения...")
 for event in longpoll.listen():
     if event.type == VkEventType.MESSAGE_NEW and event.to_me:
@@ -189,6 +201,9 @@ for event in longpoll.listen():
 
         elif "ссылки" in request:
             send_message(event.user_id, get_links(request))
+
+        elif "команды" in request or "помощь" in request:
+            send_message(event.user_id, get_commands())
 
         elif "расписание" in request or "завтра" in request:
             send_message(event.user_id, get_tomorrow_schedule())
