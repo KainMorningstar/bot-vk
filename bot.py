@@ -1,6 +1,7 @@
 import os
 import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
+from vk_api.keyboard import VkKeyboard, VkKeyboardColor
 import random
 from datetime import datetime, timedelta
 
@@ -108,12 +109,22 @@ vk_session = vk_api.VkApi(token=TOKEN)
 vk = vk_session.get_api()
 longpoll = VkLongPoll(vk_session)
 
-def send_message(user_id, message):
+def send_message(user_id, message, keyboard=None):
     vk.messages.send(
         user_id=user_id,
         message=message,
+        keyboard=keyboard,
         random_id=random.randint(1, 2**31)
     )
+
+def get_main_keyboard():
+    keyboard = VkKeyboard(one_time=False)
+    keyboard.add_button('Преподы', color=VkKeyboardColor.PRIMARY)
+    keyboard.add_button('Расписание', color=VkKeyboardColor.POSITIVE)
+    keyboard.add_line()
+    keyboard.add_button('Ссылки', color=VkKeyboardColor.SECONDARY)
+    keyboard.add_button('Команды', color=VkKeyboardColor.SECONDARY)
+    return keyboard.get_keyboard()
 
 def is_pair_today(pair, date_key, day_name):
     if "dates" in pair:
@@ -209,7 +220,11 @@ for event in longpoll.listen():
             send_message(event.user_id, get_tomorrow_schedule())
 
         elif "привет" in request or "start" in request or "начать" in request:
-            send_message(event.user_id, "Первый курс, стомат? Прикольно, ладно, и что тебе надо?")
+            send_message(
+                event.user_id,
+                "Первый курс, стомат? Прикольно, ладно, и что тебе надо?",
+                keyboard=get_main_keyboard()
+            )
 
         else:
             send_message(event.user_id, "Я не понял команду. Попробуй: 'преподы', 'ссылки', 'расписание' или 'привет'.")
