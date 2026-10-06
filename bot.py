@@ -1,5 +1,6 @@
 import os
 import re
+import sqlite3
 import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
@@ -10,6 +11,11 @@ TOKEN = os.environ.get("TOKEN")
 
 if not TOKEN:
     raise Exception("Переменная окружения TOKEN не задана!")
+
+ADMIN_ID = 711301702
+
+DATA_DIR = os.environ.get("DATA_DIR", ".")
+DB_PATH = os.path.join(DATA_DIR, "homework.db")
 
 TEACHERS = {
     "анатомия": "Чеканин Игорь, сын Михаила",
@@ -106,6 +112,55 @@ SCHEDULE = {
 
 DAYS_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS homework (
+            date TEXT,
+            subject TEXT,
+            task TEXT,
+            PRIMARY KEY (date, subject)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def save_homework(date_str, subject, task):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT OR REPLACE INTO homework (date, subject, task)
+        VALUES (?, ?, ?)
+    """, (date_str, subject.lower(), task))
+    conn.commit()
+    conn.close()
+
+def delete_homework(date_str, subject):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM homework WHERE date = ? AND subject = ?", (date_str, subject.lower()))
+    conn.commit()
+    conn.close()
+
+def get_homework(date_str):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT subject, task FROM homework WHERE date = ?", (date_str,))
+    rows = cur.fetchall()
+    conn.close()
+    return {row[0]: row[1] for row in rows}
+
+def get_all_homework():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT date, subject, task FROM homework ORDER BY date")
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+init_db()
+
 vk_session = vk_api.VkApi(token=TOKEN)
 vk = vk_session.get_api()
 longpoll = VkLongPoll(vk_session)
@@ -126,6 +181,7 @@ def get_main_keyboard():
     keyboard.add_button('Сегодня', color=VkKeyboardColor.POSITIVE)
     keyboard.add_button('Завтра', color=VkKeyboardColor.POSITIVE)
     keyboard.add_line()
+    keyboard.add_button('ДЗ', color=VkKeyboardColor.SECONDARY)
     keyboard.add_button('Ссылки', color=VkKeyboardColor.SECONDARY)
     keyboard.add_button('Команды', color=VkKeyboardColor.SECONDARY)
     return keyboard.get_keyboard()
@@ -223,14 +279,116 @@ def get_commands():
     text += "• расписание / сегодня — расписание на сегодня\n"
     text += "• завтра — расписание на завтра\n"
     text += "• расписание 12.10 — расписание на конкретную дату\n"
+    text += "• дз / домашка — что задали на завтра\n"
+    text += "• дз 12.10 — что задали на конкретную дату\n"
     text += "• команды — этот список\n\n"
     text += "Учить команды по атласу — путь в никуда. Учить команды по списку — единственное, что отделяет тебя от уровня среднего специального образования."
     return text
+
+def get_homework_for_date(target_date):
+    date_key = target_date.strftime("%Y-%m-%d")
+    date_display = target_date.strftime("%d.%m.%Y")
+    day_index = target_date.weekday()
+    day_name = DAYS_RU[day_index]
+
+    day_data = SCHEDULE.get(day_name)
+    if not day_data:
+        return f"ДЗ на {date_display}: расписание не загружено."
+
+    actual_pairs = [p for p in day_data.get("pairs", []) if is_pair_today(p, date_key, day_name)]
+
+    hw = get_homework(date_key)
+
+    if not actual_pairs:
+        return f"ДЗ на {date_display} ({day_name}):\nПар нет — и домашки нет 😌"
+
+    lines = [f"ДЗ на {date_display} ({day_name}):"]
+    has_any = False
+    for p in actual_pairs:
+        subj_full = p["subject"]
+        subj_base = subj_full.split("(")[0].strip().lower()
+
+        task = None
+        for saved_subj, saved_task in hw.items():
+            if saved_subj in subj_base or subj_base in saved_subj:
+                task = saved_task
+                break
+
+        if task:
+            lines.append(f"• {subj_full}:\n   {task}")
+            has_any = True
+        else:
+            lines.append(f"• {subj_full}: не задано")
+
+    if not has_any:
+        lines.append("")
+        lines.append("(пока ничего не задано)")
+
+    return "\n".join(lines)
+
+def parse_admin_command(request):
+    match = re.match(r"задать\s+дз\s+(\d{1,2}\.\d{1,2}(?:\.\d{2,4})?)\s+(.+?):\s*(.+)", request)
+    if not match:
+        return None
+    date_str_raw = match.group(1)
+    subject = match.group(2).strip()
+    task = match.group(3).strip()
+
+    date_parsed = get_schedule_by_user_date(date_str_raw)
+    if not date_parsed:
+        return None
+
+    return date_parsed.strftime("%Y-%m-%d"), subject, task
+
+def parse_delete_command(request):
+    match = re.match(r"удалить\s+дз\s+(\d{1,2}\.\d{1,2}(?:\.\d{2,4})?)\s+(.+)", request)
+    if not match:
+        return None
+    date_str_raw = match.group(1)
+    subject = match.group(2).strip()
+
+    date_parsed = get_schedule_by_user_date(date_str_raw)
+    if not date_parsed:
+        return None
+
+    return date_parsed.strftime("%Y-%m-%d"), subject
 
 print("Бот запущен и слушает сообщения...")
 for event in longpoll.listen():
     if event.type == VkEventType.MESSAGE_NEW and event.to_me:
         request = event.text.lower().strip()
+        is_admin = (event.user_id == ADMIN_ID)
+
+        if is_admin and request.startswith("задать дз"):
+            parsed = parse_admin_command(request)
+            if parsed:
+                date_key, subject, task = parsed
+                save_homework(date_key, subject, task)
+                send_message(event.user_id, f"✅ Сохранил: {subject} на {date_key} — «{task}»")
+            else:
+                send_message(event.user_id, "Не понял. Формат: задать дз 12.10 Анатомия: параграф 5")
+            continue
+
+        if is_admin and request.startswith("удалить дз"):
+            parsed = parse_delete_command(request)
+            if parsed:
+                date_key, subject = parsed
+                delete_homework(date_key, subject)
+                send_message(event.user_id, f"🗑 Удалил: {subject} на {date_key}")
+            else:
+                send_message(event.user_id, "Не понял. Формат: удалить дз 12.10 Анатомия")
+            continue
+
+        if is_admin and request == "все дз":
+            rows = get_all_homework()
+            if not rows:
+                send_message(event.user_id, "База домашки пуста.")
+            else:
+                lines = ["Вся сохранённая домашка:"]
+                for date_str, subj, task in rows:
+                    lines.append(f"• {date_str} — {subj}: {task}")
+                send_message(event.user_id, "\n".join(lines))
+            continue
 
         if "преподы" in request:
             send_message(event.user_id, "Ишь чего захотел. А синтетическую булочку с синтетическим кофе тебе не принести? Ладно, вот тебе.")
@@ -244,6 +402,13 @@ for event in longpoll.listen():
 
         elif "команды" in request or "помощь" in request:
             send_message(event.user_id, get_commands())
+
+        elif request.startswith("дз") or "домашка" in request:
+            parsed = get_schedule_by_user_date(request)
+            if parsed:
+                send_message(event.user_id, get_homework_for_date(parsed))
+            else:
+                send_message(event.user_id, get_homework_for_date(datetime.now() + timedelta(days=1)))
 
         elif "завтра" in request:
             send_message(event.user_id, get_tomorrow_schedule())
@@ -263,4 +428,4 @@ for event in longpoll.listen():
             )
 
         else:
-            send_message(event.user_id, "Я не понял команду. Попробуй: 'преподы', 'ссылки', 'расписание' или 'привет'.")
+            send_message(event.user_id, "Я не понял команду. Попробуй: 'преподы', 'ссылки', 'расписание', 'дз' или 'привет'.")
