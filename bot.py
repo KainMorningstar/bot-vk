@@ -1,4 +1,5 @@
 import os
+import re
 import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
@@ -122,6 +123,9 @@ def get_main_keyboard():
     keyboard.add_button('Преподы', color=VkKeyboardColor.PRIMARY)
     keyboard.add_button('Расписание', color=VkKeyboardColor.POSITIVE)
     keyboard.add_line()
+    keyboard.add_button('Сегодня', color=VkKeyboardColor.POSITIVE)
+    keyboard.add_button('Завтра', color=VkKeyboardColor.POSITIVE)
+    keyboard.add_line()
     keyboard.add_button('Ссылки', color=VkKeyboardColor.SECONDARY)
     keyboard.add_button('Команды', color=VkKeyboardColor.SECONDARY)
     return keyboard.get_keyboard()
@@ -165,11 +169,10 @@ def format_schedule(day_data, date_str, date_key, day_name):
 
     return "\n".join(lines)
 
-def get_tomorrow_schedule():
-    tomorrow = datetime.now() + timedelta(days=1)
-    date_key = tomorrow.strftime("%Y-%m-%d")
-    date_display = tomorrow.strftime("%d.%m.%Y")
-    day_index = tomorrow.weekday()
+def get_schedule_for_date(target_date):
+    date_key = target_date.strftime("%Y-%m-%d")
+    date_display = target_date.strftime("%d.%m.%Y")
+    day_index = target_date.weekday()
     day_name = DAYS_RU[day_index]
 
     day_data = SCHEDULE.get(day_name)
@@ -177,6 +180,30 @@ def get_tomorrow_schedule():
         return "Расписание на эту дату ещё не загружено."
 
     return format_schedule(day_data, date_display, date_key, day_name)
+
+def get_today_schedule():
+    return get_schedule_for_date(datetime.now())
+
+def get_tomorrow_schedule():
+    return get_schedule_for_date(datetime.now() + timedelta(days=1))
+
+def get_schedule_by_user_date(text):
+    match = re.search(r"(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?", text)
+    if not match:
+        return None
+    day = int(match.group(1))
+    month = int(match.group(2))
+    year_str = match.group(3)
+    if year_str:
+        year = int(year_str)
+        if year < 100:
+            year += 2000
+    else:
+        year = datetime.now().year
+    try:
+        return datetime(year, month, day)
+    except ValueError:
+        return None
 
 def get_links(request):
     for subj in LINKS:
@@ -193,7 +220,9 @@ def get_commands():
     text += "• преподы — список преподавателей\n"
     text += "• ссылки — все ссылки на дистанционные предметы\n"
     text += "• ссылки [предмет] — ссылка на конкретный предмет\n"
-    text += "• расписание / завтра — расписание на завтра\n"
+    text += "• расписание / сегодня — расписание на сегодня\n"
+    text += "• завтра — расписание на завтра\n"
+    text += "• расписание 12.10 — расписание на конкретную дату\n"
     text += "• команды — этот список\n\n"
     text += "Учить команды по атласу — путь в никуда. Учить команды по списку — единственное, что отделяет тебя от уровня среднего специального образования."
     return text
@@ -216,8 +245,15 @@ for event in longpoll.listen():
         elif "команды" in request or "помощь" in request:
             send_message(event.user_id, get_commands())
 
-        elif "расписание" in request or "завтра" in request:
+        elif "завтра" in request:
             send_message(event.user_id, get_tomorrow_schedule())
+
+        elif "расписание" in request or "сегодня" in request:
+            parsed = get_schedule_by_user_date(request)
+            if parsed:
+                send_message(event.user_id, get_schedule_for_date(parsed))
+            else:
+                send_message(event.user_id, get_today_schedule())
 
         elif "привет" in request or "start" in request or "начать" in request:
             send_message(
